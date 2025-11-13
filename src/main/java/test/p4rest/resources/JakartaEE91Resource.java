@@ -1,6 +1,5 @@
 package test.p4rest.resources;
 
-
 import clases.OperacionSQL;
 import clases.Imagen;
 import jakarta.ws.rs.Consumes;
@@ -12,9 +11,17 @@ import jakarta.ws.rs.PathParam;
 import jakarta.ws.rs.Produces;
 import jakarta.ws.rs.core.MediaType;
 import jakarta.ws.rs.core.Response;
+import java.io.File;
+import java.io.IOException;
+import java.io.InputStream;
+import java.nio.file.StandardCopyOption;
 import java.text.SimpleDateFormat;
 import java.util.Date;
 import java.util.List;
+import java.util.logging.Level;
+import java.util.logging.Logger;
+import org.glassfish.jersey.media.multipart.FormDataContentDisposition;
+import org.glassfish.jersey.media.multipart.FormDataParam;
 
 /**
  *
@@ -22,6 +29,8 @@ import java.util.List;
  */
 @Path("jakartaee9")
 public class JakartaEE91Resource {
+
+    private static final String UPLOAD_DIR = "/var/webapp/uploads/";
 
     private String imagenAJson(Imagen img) {
         if (img == null) {
@@ -116,8 +125,6 @@ public class JakartaEE91Resource {
      * @param capt_date
      * @return
      */
-    
-    
     @Path("register")
     @POST
     @Consumes(MediaType.APPLICATION_FORM_URLENCODED)
@@ -150,11 +157,96 @@ public class JakartaEE91Resource {
 
     }
 
+    @Path("registerImageFile")
+    @POST
+    @Consumes(MediaType.MULTIPART_FORM_DATA)
+    @Produces(MediaType.APPLICATION_JSON)
+    public Response registerImageFile(
+            @FormDataParam("title") String title,
+            @FormDataParam("description") String description,
+            @FormDataParam("keywords") String keywords,
+            @FormDataParam("author") String author,
+            @FormDataParam("creator") String creator,
+            @FormDataParam("capture") String capt_date,
+            @FormDataParam("filename") String filename,
+            @FormDataParam("file") InputStream fileInputStream,
+            @FormDataParam("file") FormDataContentDisposition fileMetaData) {
 
-    
-    
-    
-    
+        Integer statusCode = 201;
+
+        if (fileInputStream == null || fileMetaData == null) {
+            return Response.status(Response.Status.BAD_REQUEST).build();
+        }
+        try {
+            // Generar nombre único si no se proporciona
+            String finalFileName = filename;
+            if (filename == null || filename.isEmpty()) {
+                finalFileName = System.currentTimeMillis() + "_" + fileMetaData.getFileName();
+            }
+
+            // Guardar el archivo
+            if (!writeImage(finalFileName, fileInputStream)) {
+                return Response.status(Response.Status.INTERNAL_SERVER_ERROR).build();
+            }
+            // Guardar metadatos en BD
+            SimpleDateFormat sdf = new SimpleDateFormat("yyyy-MM-dd");
+            String fechaAlta = sdf.format(new Date());
+
+            Imagen img = new Imagen(title, description, keywords, author, creator, capt_date, fechaAlta, finalFileName);
+            OperacionSQL op = new OperacionSQL();
+            boolean registroExitoso = op.insertarImagen(img);
+
+            if (registroExitoso) {
+                return Response.ok().build();
+            } else {
+                return Response.status(Response.Status.INTERNAL_SERVER_ERROR).build();
+            }
+
+        } catch (Exception e) {
+            e.printStackTrace();
+            return Response
+                    .status(500)
+                    .entity("{\"error\":\"" + e.getMessage() + "\"}")
+                    .build();
+        }
+    }
+
+    public static Boolean writeImage(String file_name, InputStream fileInputStream) {
+        try {
+            makeDirIfNotExists();
+            File targetfile = new File(UPLOAD_DIR + file_name);
+            java.nio.file.Files.copy(
+                    fileInputStream,
+                    targetfile.toPath(),
+                    StandardCopyOption.REPLACE_EXISTING
+            );
+            return true;
+        } catch (IOException ex) {
+            Logger.getLogger(JakartaEE91Resource.class.getName()).log(Level.SEVERE, null, ex);
+        }
+        return null;
+    }
+
+    public static Boolean deleteImage(String file_name) {
+        makeDirIfNotExists();
+
+        File targetfile = new File(UPLOAD_DIR + file_name);
+        if (!targetfile.delete()) {
+            System.out.println("ERROR: Failed to delete " + targetfile.getAbsolutePath());
+            return false;
+        }
+
+        System.out.println("SUCCESS: deleted " + targetfile.getAbsolutePath());
+        return true;
+    }
+
+    private static void makeDirIfNotExists() {
+        File dir = new File(UPLOAD_DIR);
+        if (!dir.exists()) {
+            dir.mkdirs();
+        }
+    }
+
     /**
      * POST method to modify an existing image
      *
@@ -247,7 +339,9 @@ public class JakartaEE91Resource {
             return Response.status(Response.Status.FORBIDDEN).build();
         }
         boolean eliminacionExitosa = op.eliminarImagen(Integer.parseInt(id));
-
+        if(eliminacionExitosa){
+            eliminacionExitosa = deleteImage(imgActual.getNombreFichero());
+        }
         if (eliminacionExitosa) {
             return Response.ok().build();
         } else {
@@ -357,7 +451,7 @@ public class JakartaEE91Resource {
         return Response.ok(listaImagenesAJson(imagenes)).build();
 
     }
-    
+
     @Path("searchKeywords/{keywords}")
     @GET
     @Produces(MediaType.APPLICATION_JSON)
